@@ -15,6 +15,8 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <string.h>
+#import <stdlib.h>
 
 // ---------- 日志 ----------
 #define NCLOG(fmt, ...) NSLog(@"[NoCard] " fmt, ##__VA_ARGS__)
@@ -31,20 +33,25 @@ static BOOL nc_hasLocalActivationCard(id self, SEL _cmd) {
 //  第 2 层：替换激活相关方法（带 completion 的）
 // ============================================================
 // createOrRefreshSessionWithCard:completion:
+// 注意：completion 是 block，用 __unsafe_unretained 桥接避免 ARC 类型错误
 static void nc_createOrRefresh(id self, SEL _cmd, id card, id completion) {
     NCLOG(@"createOrRefreshSessionWithCard -> 伪造成功");
-    if (completion) {
-        void (^blk)(id, id) = (__bridge void (^)(id, id))completion;
-        @try { blk(@"NOCARD_TOKEN", nil); } @catch (NSException *e) {}
+    if (!completion) return;
+    typedef void (^NCCompletion1)(id, id);
+    __unsafe_unretained NCCompletion1 blk = (__unsafe_unretained NCCompletion1)completion;
+    @try { blk(@"NOCARD_TOKEN", nil); } @catch (NSException *e) {
+        NCLOG(@"回调异常: %@", e);
     }
 }
 
 // finishActivationWithCard:pending:progress:completion:
 static void nc_finishActivation(id self, SEL _cmd, id card, id pending, id progress, id completion) {
     NCLOG(@"finishActivationWithCard -> 强制成功");
-    if (completion) {
-        void (^blk)(BOOL, id) = (__bridge void (^)(BOOL, id))completion;
-        @try { blk(YES, nil); } @catch (NSException *e) {}
+    if (!completion) return;
+    typedef void (^NCCompletion2)(BOOL, id);
+    __unsafe_unretained NCCompletion2 blk = (__unsafe_unretained NCCompletion2)completion;
+    @try { blk(YES, nil); } @catch (NSException *e) {
+        NCLOG(@"回调异常: %@", e);
     }
 }
 
