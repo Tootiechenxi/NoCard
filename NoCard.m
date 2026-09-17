@@ -18,8 +18,11 @@
 #import <string.h>
 #import <stdlib.h>
 
-// ---------- 日志 ----------
-#define NCLOG(fmt, ...) NSLog(@"[NoCard] " fmt, ##__VA_ARGS__)
+// ---------- 日志（用函数而非宏，避免 __VA_ARGS__ 兼容问题）----------
+static void NCLog(NSString *msg) {
+    NSLog(@"[NoCard] %@", msg);
+}
+#define NCLOG(fmt, ...) NCLog([NSString stringWithFormat:(fmt), ##__VA_ARGS__])
 
 // ============================================================
 //  第 1 层：直接替换 hasLocalActivationCard
@@ -33,13 +36,16 @@ static BOOL nc_hasLocalActivationCard(id self, SEL _cmd) {
 //  第 2 层：替换激活相关方法（带 completion 的）
 // ============================================================
 // createOrRefreshSessionWithCard:completion:
-// 注意：completion 是 block，用 __unsafe_unretained 桥接避免 ARC 类型错误
+// ARC 下 id -> block 需经 void* 中转，否则报"ownership qualifier has no effect"
 static void nc_createOrRefresh(id self, SEL _cmd, id card, id completion) {
     NCLOG(@"createOrRefreshSessionWithCard -> 伪造成功");
     if (!completion) return;
     typedef void (^NCCompletion1)(id, id);
-    __unsafe_unretained NCCompletion1 blk = (__unsafe_unretained NCCompletion1)completion;
-    @try { blk(@"NOCARD_TOKEN", nil); } @catch (NSException *e) {
+    void *p = (__bridge void *)completion;
+    NCCompletion1 blk = (__bridge NCCompletion1)p;
+    @try {
+        blk(@"NOCARD_TOKEN", nil);
+    } @catch (NSException *e) {
         NCLOG(@"回调异常: %@", e);
     }
 }
@@ -49,8 +55,11 @@ static void nc_finishActivation(id self, SEL _cmd, id card, id pending, id progr
     NCLOG(@"finishActivationWithCard -> 强制成功");
     if (!completion) return;
     typedef void (^NCCompletion2)(BOOL, id);
-    __unsafe_unretained NCCompletion2 blk = (__unsafe_unretained NCCompletion2)completion;
-    @try { blk(YES, nil); } @catch (NSException *e) {
+    void *p = (__bridge void *)completion;
+    NCCompletion2 blk = (__bridge NCCompletion2)p;
+    @try {
+        blk(YES, nil);
+    } @catch (NSException *e) {
         NCLOG(@"回调异常: %@", e);
     }
 }
@@ -63,7 +72,8 @@ static BOOL nc_returnYES(id self, SEL _cmd) {
     return YES;
 }
 
-// 通用：无参返回 nil（安全空实现）
+// 通用：无参返回 nil（安全空实现，备用）
+__attribute__((unused))
 static id nc_returnNil(id self, SEL _cmd) {
     return nil;
 }
@@ -109,21 +119,21 @@ static int nc_scanAndHook(void) {
             const char *sn = sel_getName(sel);
             if (!sn) continue;
 
-            // 匹配"卡密/激活"相关的无参 BOOL 方法
+            // 只处理无参方法（不含冒号）
+            if (strchr(sn, ':') != NULL) continue;
+
+            // 匹配"卡密/激活"相关的名字
             BOOL nameHit =
                 (strstr(sn, "hasLocalActivation") != NULL) ||
                 (strstr(sn, "hasCard") != NULL) ||
                 (strstr(sn, "isActivated") != NULL) ||
-                (strstr(sn, "hasActivation") != NULL);
+                (strstr(sn, "hasActivation") != NULL) ||
+                (strstr(sn, "cardRequired") != NULL);
 
             if (nameHit) {
-                // 检查返回值类型是否为 BOOL
-                const char *ret = method_getTypeEncoding(methods[j]);
-                if (ret && (ret[0] == 'B' || ret[0] == 'c')) {
-                    method_setImplementation(methods[j], (IMP)nc_returnYES);
-                    NCLOG(@"扫描 hook: %s [%s]", cn, sn);
-                    hooked++;
-                }
+                method_setImplementation(methods[j], (IMP)nc_returnYES);
+                NCLog([NSString stringWithFormat:@"扫描 hook: %s [%s]", cn, sn]);
+                hooked++;
             }
         }
         if (methods) free(methods);
