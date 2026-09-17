@@ -1,0 +1,51 @@
+name: Build NoCard dylib
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout 代码
+        uses: actions/checkout@v4
+
+      - name: 确认 SDK
+        run: |
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: 编译 NoCard.dylib（arm64）
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+
+          # 编译成动态库
+          xcrun --sdk iphoneos clang -arch arm64 -isysroot "$SDK" \
+                -miphoneos-version-min=14.0 \
+                -fobjc-arc \
+                -dynamiclib \
+                -install_name "@executable_path/NoCard.dylib" \
+                -framework Foundation \
+                NoCard.m \
+                -o NoCard.dylib
+
+          echo "=== 编译结果 ==="
+          file NoCard.dylib
+          ls -la NoCard.dylib
+
+      - name: 用 ldid 签名（可选）
+        run: |
+          brew install ldid 2>/dev/null || true
+          if command -v ldid >/dev/null 2>&1; then
+            ldid -S NoCard.dylib && echo "已签名"
+          else
+            echo "无 ldid，跳过（TrollStore 会重新签）"
+          fi
+
+      - name: 上传 dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoCard-dylib
+          path: NoCard.dylib
